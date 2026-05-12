@@ -72,3 +72,12 @@ def criar_candidato(
 def atualizar_status_candidato(candidate_id: str, status: str) -> None:
     sb = get_client()
     sb.table("candidatos_maya").update({"status": status}).eq("id", candidate_id).execute()
+
+
+def save_metric(data: dict) -> None:
+    try:
+        row = {k: v for k, v in data.items() if k != "timestamp"}
+        get_client().table("agent_metrics").insert(row).execute()
+    except Exception as exc:
+        import logging
+        logging.getLogger("maya.metrics").warning("Falha ao salvar métrica: %s", exc)

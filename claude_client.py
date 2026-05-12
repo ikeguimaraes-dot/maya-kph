@@ -56,9 +56,15 @@ def _execute_tool(name: str, input_data: dict) -> str:
         return f"Erro ao executar {name}: {exc}"
 
 
-def process_message(telefone: str, history: list[dict], user_text: str) -> str:
+def process_message(history: list[dict], user_text: str) -> tuple[str, dict]:
+    """Returns (reply_text, usage) where usage has input_tokens and output_tokens
+    accumulated across all tool-loop iterations."""
     messages = list(history)
     messages.append({"role": "user", "content": user_text})
+
+    total_input = 0
+    total_output = 0
+    response = None
 
     for _ in range(MAX_TOOL_ITERATIONS):
         response = _anthropic.messages.create(
@@ -76,15 +82,17 @@ def process_message(telefone: str, history: list[dict], user_text: str) -> str:
             messages=messages,
         )
 
+        total_input += response.usage.input_tokens
+        total_output += response.usage.output_tokens
+
         # Append assistant turn to messages
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason == "end_turn":
-            # Extract text from response
             for block in response.content:
                 if hasattr(block, "type") and block.type == "text":
-                    return block.text
-            return "Olá! Pode me falar mais?"
+                    return block.text, {"input_tokens": total_input, "output_tokens": total_output}
+            return "Olá! Pode me falar mais?", {"input_tokens": total_input, "output_tokens": total_output}
 
         if response.stop_reason == "tool_use":
             tool_results = []
@@ -101,10 +109,9 @@ def process_message(telefone: str, history: list[dict], user_text: str) -> str:
             messages.append({"role": "user", "content": tool_results})
             continue
 
-        # Unexpected stop — return whatever text we have
         break
 
     for block in (response.content if response else []):
         if hasattr(block, "type") and block.type == "text":
-            return block.text
-    return "Desculpe, tive um problema interno. Pode repetir?"
+            return block.text, {"input_tokens": total_input, "output_tokens": total_output}
+    return "Desculpe, tive um problema interno. Pode repetir?", {"input_tokens": total_input, "output_tokens": total_output}
