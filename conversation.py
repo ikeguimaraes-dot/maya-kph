@@ -1,25 +1,77 @@
-from threading import Lock
+"""
+Persistent conversation history via Supabase (agent_conversations table).
+Falls back to empty list if the row doesn't exist or last activity > 24h.
+"""
 
-_conversations: dict[str, list[dict]] = {}
-_lock = Lock()
+from datetime import datetime, timezone, timedelta
+from supabase_client import get_client
 
+AGENT = "maya"
 MAX_MESSAGES = 20
+SESSION_TTL_HOURS = 24
+
+
+def _clean_phone(telefone: str) -> str:
+    return telefone.replace("whatsapp:", "").strip()
 
 
 def get_history(telefone: str) -> list[dict]:
-    with _lock:
-        return list(_conversations.get(telefone, []))
+    phone = _clean_phone(telefone)
+    sb = get_client()
+    response = (
+        sb.table("agent_conversations")
+        .select("messages, last_activity")
+        .eq("agent", AGENT)
+        .eq("phone", phone)
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        return []
+
+    row = response.data[0]
+    last_activity = datetime.fromisoformat(row["last_activity"])
+    if last_activity.tzinfo is None:
+        last_activity = last_activity.replace(tzinfo=timezone.utc)
+
+    if datetime.now(timezone.utc) - last_activity > timedelta(hours=SESSION_TTL_HOURS):
+        clear_history(telefone)
+        return []
+
+    return list(row["messages"] or [])
 
 
 def append_message(telefone: str, role: str, content) -> None:
-    with _lock:
-        history = _conversations.setdefault(telefone, [])
-        history.append({"role": role, "content": content})
-        if len(history) > MAX_MESSAGES:
-            # Remove oldest pair to keep context coherent
-            _conversations[telefone] = history[-MAX_MESSAGES:]
+    phone = _clean_phone(telefone)
+    sb = get_client()
+
+    # Fetch current messages
+    response = (
+        sb.table("agent_conversations")
+        .select("messages")
+        .eq("agent", AGENT)
+        .eq("phone", phone)
+        .limit(1)
+        .execute()
+    )
+    messages = list(response.data[0]["messages"] or []) if response.data else []
+
+    messages.append({"role": role, "content": content})
+    if len(messages) > MAX_MESSAGES:
+        messages = messages[-MAX_MESSAGES:]
+
+    sb.table("agent_conversations").upsert(
+        {
+            "agent": AGENT,
+            "phone": phone,
+            "messages": messages,
+            "last_activity": datetime.now(timezone.utc).isoformat(),
+        },
+        on_conflict="agent,phone",
+    ).execute()
 
 
 def clear_history(telefone: str) -> None:
-    with _lock:
-        _conversations.pop(telefone, None)
+    phone = _clean_phone(telefone)
+    sb = get_client()
+    sb.table("agent_conversations").delete().eq("agent", AGENT).eq("phone", phone).execute()

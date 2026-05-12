@@ -29,17 +29,19 @@ def buscar_vagas_abertas(area: str | None = None) -> list[dict]:
 
 def buscar_candidato_por_telefone(telefone: str) -> dict | None:
     sb = get_client()
-    # Normalize: strip 'whatsapp:' prefix for storage comparison
-    phone_clean = telefone.replace("whatsapp:", "")
-    response = (
-        sb.table("candidates")
-        .select("id, nome, status, area_interesse, cargo_interesse")
-        .or_(f"telefone.eq.{telefone},telefone.eq.{phone_clean}")
-        .limit(1)
-        .execute()
-    )
-    data = response.data
-    return data[0] if data else None
+    phone_clean = telefone.replace("whatsapp:", "").strip()
+    # Two separate queries to avoid '+' encoding issues in PostgREST .or_()
+    for phone in (phone_clean, f"whatsapp:{phone_clean}"):
+        response = (
+            sb.table("candidatos_maya")
+            .select("id, nome, status, area_interesse, cargo_interesse")
+            .eq("telefone", phone)
+            .limit(1)
+            .execute()
+        )
+        if response.data:
+            return response.data[0]
+    return None
 
 
 def criar_candidato(
@@ -49,9 +51,9 @@ def criar_candidato(
     cargo_interesse: str,
 ) -> str:
     sb = get_client()
-    phone_clean = telefone.replace("whatsapp:", "")
+    phone_clean = telefone.replace("whatsapp:", "").strip()
     response = (
-        sb.table("candidates")
+        sb.table("candidatos_maya")
         .insert(
             {
                 "nome": nome,
@@ -69,4 +71,4 @@ def criar_candidato(
 
 def atualizar_status_candidato(candidate_id: str, status: str) -> None:
     sb = get_client()
-    sb.table("candidates").update({"status": status}).eq("id", candidate_id).execute()
+    sb.table("candidatos_maya").update({"status": status}).eq("id", candidate_id).execute()
