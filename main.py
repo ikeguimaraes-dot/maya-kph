@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import time
@@ -68,13 +69,17 @@ class ChatResponse(BaseModel):
 
 
 class SendRequest(BaseModel):
-    phone: str          # "+5511945645427" ou "whatsapp:+55..."
-    message: str
+    phone: str                              # "+5511..." ou "whatsapp:+55..."
+    message: str                            # texto para histórico (e freeform quando sem content_sid)
     operator_name: str = "Operador"
+    content_sid: str | None = None          # HX... template aprovado pela Meta
+    content_variables: dict | None = None  # {"1": "João"} — variáveis do template
+    status_callback: str | None = None     # URL para Twilio enviar delivery status
 
 
 class SendResponse(BaseModel):
     ok: bool
+    message_sid: str | None = None
     error: str | None = None
 
 
@@ -101,19 +106,28 @@ async def send_operator(req: SendRequest):
     except Exception as e:
         log.error("Supabase update failed: %s", e)
 
-    # 3. Envia via Twilio
+    # 3. Envia via Twilio — modo template (proativo) ou freeform (janela ativa)
     try:
-        get_twilio().messages.create(
-            from_=TWILIO_FROM,
-            to=wa_to,
-            body=req.message,
-        )
-        log.info("Twilio enviado para %s por %s", phone, req.operator_name)
+        if req.content_sid:
+            kwargs: dict = dict(
+                from_=TWILIO_FROM,
+                to=wa_to,
+                content_sid=req.content_sid,
+                content_variables=json.dumps(req.content_variables or {}),
+            )
+        else:
+            kwargs = dict(from_=TWILIO_FROM, to=wa_to, body=req.message)
+
+        if req.status_callback:
+            kwargs["status_callback"] = req.status_callback
+
+        msg = get_twilio().messages.create(**kwargs)
+        log.info("Twilio enviado para %s por %s (sid=%s)", phone, req.operator_name, msg.sid)
     except Exception as e:
         log.error("Twilio send failed para %s: %s", phone, e)
         return SendResponse(ok=False, error=str(e))
 
-    return SendResponse(ok=True)
+    return SendResponse(ok=True, message_sid=msg.sid)
 
 
 @app.post("/chat", response_model=ChatResponse)
