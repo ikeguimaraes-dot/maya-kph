@@ -17,7 +17,7 @@ def buscar_vagas_abertas(area: str | None = None) -> list[dict]:
     sb = get_client()
     query = (
         sb.table("job_openings")
-        .select("id, title, unit_id, salario_base, sla_dias, must_have")
+        .select("id, title, unit_id, salario, sla_dias, must_have")
         .eq("status", "open")
     )
     if area:
@@ -81,3 +81,4 @@ def save_metric(data: dict) -> None:
     except Exception as exc:
         import logging
         logging.getLogger("maya.metrics").warning("Falha ao salvar métrica: %s", exc)
+
