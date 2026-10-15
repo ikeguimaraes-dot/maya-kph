@@ -14,6 +14,7 @@ from twilio.twiml.messaging_response import MessagingResponse
 import claude_client
 import conversation
 import instrumentation
+import security
 import supabase_client as db
 
 logging.basicConfig(level=logging.INFO)
@@ -89,7 +90,8 @@ async def health():
 
 
 @app.post("/send", response_model=SendResponse)
-async def send_operator(req: SendRequest):
+async def send_operator(req: SendRequest, request: Request):
+    security.require_api_key(request, AGENT_NAME)
     """Operador injeta mensagem — salva no histórico e envia via Twilio WhatsApp."""
     phone = req.phone.replace("whatsapp:", "").strip()
     wa_to = f"whatsapp:{phone}"
@@ -131,7 +133,8 @@ async def send_operator(req: SendRequest):
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
+    security.require_api_key(request, AGENT_NAME)
     """Endpoint web para o KPH-OS (sem Twilio). Usa session_id como identificador."""
     session_key = f"web:{req.session_id}"
     log.info("Chat web [%s]: %s", session_key, req.message[:80])
@@ -168,6 +171,7 @@ async def chat(req: ChatRequest):
 @app.post("/webhook")
 async def webhook(request: Request):
     form = await request.form()
+    security.validate_twilio(request, form)
     telefone: str = form.get("From", "")
     body: str = form.get("Body", "").strip()
 
@@ -175,8 +179,14 @@ async def webhook(request: Request):
 
     if not telefone or not body:
         resp = MessagingResponse()
-        resp.message("Não recebi sua mensagem. Pode tentar de novo?")
+        
         return Response(content=str(resp), media_type="application/xml")
+
+    if not security.claim_message(db.get_client(), AGENT_NAME, form):
+        return Response(content=str(MessagingResponse()), media_type="application/xml")
+    if security.is_assumed(db.get_client(), AGENT_NAME, telefone):
+        conversation.append_message(telefone, "user", body)
+        return Response(content=str(MessagingResponse()), media_type="application/xml")
 
     history = conversation.get_history(telefone)
 
@@ -205,5 +215,7 @@ async def webhook(request: Request):
     )
 
     resp = MessagingResponse()
-    resp.message(response_text)
+    if not security.is_assumed(db.get_client(), AGENT_NAME, telefone):
+        resp.message(response_text)
     return Response(content=str(resp), media_type="application/xml")
+

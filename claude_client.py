@@ -23,7 +23,7 @@ def _execute_tool(name: str, input_data: dict) -> str:
                 return "Nenhuma vaga aberta encontrada para essa área no momento."
             linhas = []
             for v in vagas:
-                salario = v.get("salario_base") or "a combinar"
+                salario = v.get("salario") or "a combinar"
                 linhas.append(f"- {v['title']} | Salário: {salario} | Must-have: {v.get('must_have', '')}")
             return "\n".join(linhas)
 
@@ -59,7 +59,7 @@ def _execute_tool(name: str, input_data: dict) -> str:
 def process_message(history: list[dict], user_text: str) -> tuple[str, dict]:
     """Returns (reply_text, usage) where usage has input_tokens and output_tokens
     accumulated across all tool-loop iterations."""
-    messages = list(history)
+    messages = [{**m, "role": "assistant" if m.get("role") == "operator" else m.get("role")} for m in history if m.get("role") in ("user", "assistant", "operator")]
     messages.append({"role": "user", "content": user_text})
 
     total_input = 0
@@ -115,3 +115,4 @@ def process_message(history: list[dict], user_text: str) -> tuple[str, dict]:
         if hasattr(block, "type") and block.type == "text":
             return block.text, {"input_tokens": total_input, "output_tokens": total_output}
     return "Desculpe, tive um problema interno. Pode repetir?", {"input_tokens": total_input, "output_tokens": total_output}
+
